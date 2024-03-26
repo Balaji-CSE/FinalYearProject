@@ -1,0 +1,97 @@
+#define VECTOR_SAO
+
+#define CMP(a, b) (((a) > (b)) - ((a) < (b)))
+
+static void FUNC(sao_edge_filter)(uint8_t *_dst, uint8_t *_src, ptrdiff_t stride_dst, int16_t *sao_offset_val,
+                                  int eo, int width, int height)
+{
+
+    static const uint8_t edge_idx[] = {1, 2, 0, 3, 4};
+    static const int8_t pos[4][2][2] =
+        {
+            {{-1, 0}, {1, 0}},  // horizontal
+            {{0, -1}, {0, 1}},  // vertical
+            {{-1, -1}, {1, 1}}, // 45 degree
+            {{1, -1}, {-1, 1}}, // 135 degree
+        };
+    pixel *dst = (pixel *)_dst;
+    pixel *src = (pixel *)_src;
+    int a_stride, b_stride;
+    int x, y;
+    ptrdiff_t stride_src = (2 * MAX_PB_SIZE + UHD_INPUT_BUFFER_PADDING_SIZE) / sizeof(pixel);
+    stride_dst /= sizeof(pixel);
+
+    a_stride = pos[eo][0][0] + pos[eo][0][1] * (int)stride_src;
+    b_stride = pos[eo][1][0] + pos[eo][1][1] * (int)stride_src;
+
+#ifdef SCALAR_SAO
+    for (y = 0; y < height; y++)
+    {
+        for (x = 0; x < width; x++)
+        {
+            int diff0 = CMP(src[x], src[x + a_stride]);
+            int diff1 = CMP(src[x], src[x + b_stride]);
+            int offset_val = edge_idx[2 + diff0 + diff1];
+            dst[x] = uhd_clip_pixel(src[x] + sao_offset_val[offset_val]);
+        }
+        src += stride_src;
+        dst += stride_dst;
+    }
+#endif
+
+#ifdef VECTOR_SAO
+    for (y = 0; y < height; y++)
+    {
+        for (x = 0; x < width; x += 8)
+        {
+// for bit_depth > 8 the if block will be executed otherwise it will go to else part of src loading
+#if BIT_DEPTH > 8
+            uint16x8_t src0 = vld1q_u16(src + x);
+            uint16x8_t src1 = vld1q_u16(src + x + a_stride);
+            uint16x8_t src2 = vld1q_u16(src + x + b_stride);
+#else
+            uint16x8_t src0 = vmovl_u8(vld1_u8(src + x));
+            uint16x8_t src1 = vmovl_u8(vld1_u8(src + x + a_stride));
+            uint16x8_t src2 = vmovl_u8(vld1_u8(src + x + b_stride));
+#endif
+
+            // computes a>b - a<b to calculate diff0 and diff1
+            uint16x8_t gt0 = vcgtq_u16(src0, src1);
+            uint16x8_t lt0 = vcltq_u16(src0, src1);
+            uint16x8_t gt1 = vcgtq_u16(src0, src2);
+            uint16x8_t lt1 = vcltq_u16(src0, src2);
+
+            int8x8_t diff0 = vmovn_s16(vreinterpretq_s16_u16(vsubq_u16(lt0, gt0)));
+            int8x8_t diff1 = vmovn_s16(vreinterpretq_s16_u16(vsubq_u16(lt1, gt1)));
+
+            // calculating offset value
+            int8x8_t edge_index = vreinterpret_s8_u8(vld1_u8(edge_idx));
+            int8x8_t ed_pos = vadd_s8(vadd_s8(vdup_n_s8(2), diff0), diff1);
+            int8x8_t off_val = vtbl1_s8(edge_index, ed_pos);
+
+            // calculates sao offset value
+            int16x8_t sao = vld1q_s16(sao_offset_val);
+            int8x8_t s_o = vqmovn_s16(sao);
+            int16x8_t offset = vmovl_s8(vtbl1_s8(s_o, off_val));
+
+            // adding src and sao offset value
+            int32x4_t f_add0 = vuqaddq_s32(vmovl_s16(vget_low_s16(offset)), vmovl_u16(vget_low_u16(src0)));
+            int32x4_t f_add1 = vuqaddq_s32(vmovl_s16(vget_high_s16(offset)), vmovl_u16(vget_high_u16(src0)));
+
+            // clipping operation
+            uint16x4_t clip0 = vqmovun_s32(f_add0);
+            uint16x4_t clip1 = vqmovun_s32(f_add1);
+
+            uint16x8_t opp = vcombine_u16(clip0, clip1);
+            #if BIT_DEPTH > 8
+                vst1q_u16(dst + x, opp);
+            #else
+            uint8x8_t finale = vqmovn_u16(opp);
+            vst1_u8(dst + x, finale);
+            #endif
+        }
+        src += stride_src;
+        dst += stride_dst;
+    }
+#endif
+}
