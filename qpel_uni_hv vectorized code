@@ -1,0 +1,304 @@
+// Vectorized version of qpel_uni_hv
+// Date : 26/03/2024
+
+// START OF QPEL_UNI_HV
+
+#define QPEL_UNI_VECTOR1
+#define QPEL_UNI_VECTOR2
+
+static void FUNC(put_hevc_qpel_uni_hv)(uint8_t *_dst, ptrdiff_t _dststride,
+                                       uint8_t *_src, ptrdiff_t _srcstride,
+                                       int height, intptr_t mx, intptr_t my, int width)
+{
+    int x, y;
+    const int16_t *filter;
+    pixel *src = (pixel *)_src;
+    ptrdiff_t srcstride = _srcstride / sizeof(pixel);
+    pixel *dst = (pixel *)_dst;
+    ptrdiff_t dststride = _dststride / sizeof(pixel);
+    int16_t tmp_array[(MAX_PB_SIZE + QPEL_EXTRA) * MAX_PB_SIZE];
+    int16_t *tmp = tmp_array;
+    int shift = 14 - BIT_DEPTH;
+
+#if BIT_DEPTH < 14
+    int offset = 1 << (shift - 1);
+#else
+    int offset = 0;
+#endif
+
+    src -= QPEL_EXTRA_BEFORE * srcstride;
+
+#ifdef QPEL_UNI_SCALAR1
+    filter = qpel_filter_size8[mx - 1];
+    for (y = 0; y < height + QPEL_EXTRA; y++)
+    {
+        for (x = 0; x < width; x++)
+        {
+            tmp[x] = QPEL_FILTER(src, 1) >> (BIT_DEPTH - 8);
+        }
+        src += srcstride;
+        tmp += MAX_PB_SIZE;
+    }
+#endif
+
+#ifdef QPEL_UNI_VECTOR1
+    int shifts = BIT_DEPTH - 8;
+    int yval = height + QPEL_EXTRA;
+    filter = qpel_filter_size8[mx - 1];
+
+    #if BIT_DEPTH > 8
+            int16x4_t fil0 = vdup_n_s16(filter[0]);
+            int16x4_t fil1 = vdup_n_s16(filter[1]);
+            int16x4_t fil2 = vdup_n_s16(filter[2]);
+            int16x4_t fil3 = vdup_n_s16(filter[3]);
+            int16x4_t fil4 = vdup_n_s16(filter[4]);
+            int16x4_t fil5 = vdup_n_s16(filter[5]);
+            int16x4_t fil6 = vdup_n_s16(filter[6]);
+            int16x4_t fil7 = vdup_n_s16(filter[7]);
+    #else
+            int16x8_t fil0 = vdupq_n_s16(filter[0]);
+            int16x8_t fil1 = vdupq_n_s16(filter[1]);
+            int16x8_t fil2 = vdupq_n_s16(filter[2]);
+            int16x8_t fil3 = vdupq_n_s16(filter[3]);
+            int16x8_t fil4 = vdupq_n_s16(filter[4]);
+            int16x8_t fil5 = vdupq_n_s16(filter[5]);
+            int16x8_t fil6 = vdupq_n_s16(filter[6]);
+            int16x8_t fil7 = vdupq_n_s16(filter[7]);
+    #endif
+
+    for (y = 0; y < yval; y++)
+    {
+        for (x = 0; x < width; x += 8)
+        {
+        #if BIT_DEPTH > 8
+            int32x4_t final1 = vdupq_n_s32(0);
+            int32x4_t final2 = vdupq_n_s32(0);
+
+            uint16_t *ptr;
+            ptr = src + x;
+            int16x4_t src0 = vreinterpret_s16_u16(vld1_u16(ptr - 3));
+            int16x4_t src1 = vreinterpret_s16_u16(vld1_u16(ptr + 1));
+
+            int16x4_t src2 = vreinterpret_s16_u16(vld1_u16(ptr - 2));
+            int16x4_t src3 = vreinterpret_s16_u16(vld1_u16(ptr + 2));
+
+            int16x4_t src4 = vreinterpret_s16_u16(vld1_u16(ptr - 1));
+            int16x4_t src5 = vreinterpret_s16_u16(vld1_u16(ptr + 3));
+
+            int16x4_t src6 = vreinterpret_s16_u16(vld1_u16(ptr));
+            int16x4_t src7 = vreinterpret_s16_u16(vld1_u16(ptr + 4));
+
+            int16x4_t src8 = vreinterpret_s16_u16(vld1_u16(ptr + 1));
+            int16x4_t src9 = vreinterpret_s16_u16(vld1_u16(ptr + 5));
+
+            int16x4_t src10 = vreinterpret_s16_u16(vld1_u16(ptr + 2));
+            int16x4_t src11 = vreinterpret_s16_u16(vld1_u16(ptr + 6));
+
+            int16x4_t src12 = vreinterpret_s16_u16(vld1_u16(ptr + 3));
+            int16x4_t src13 = vreinterpret_s16_u16(vld1_u16(ptr + 7));
+
+            int16x4_t src14 = vreinterpret_s16_u16(vld1_u16(ptr + 4));
+            int16x4_t src15 = vreinterpret_s16_u16(vld1_u16(ptr + 8));
+
+
+            final1 = vmlal_s16(final1, src0 , fil0);
+            final2 = vmlal_s16(final2, src1 , fil0);
+
+            final1 = vmlal_s16(final1, src2 , fil1);
+            final2 = vmlal_s16(final2, src3 , fil1);
+
+            final1 = vmlal_s16(final1, src4 , fil2);
+            final2 = vmlal_s16(final2, src5 , fil2);
+
+            final1 = vmlal_s16(final1, src6 , fil3);
+            final2 = vmlal_s16(final2, src7 , fil3);
+
+            final1 = vmlal_s16(final1, src8 , fil4);
+            final2 = vmlal_s16(final2, src9 , fil4);
+
+            final1 = vmlal_s16(final1, src10 , fil5);
+            final2 = vmlal_s16(final2, src11 , fil5);
+
+            final1 = vmlal_s16(final1, src12 , fil6);
+            final2 = vmlal_s16(final2, src13 , fil6);
+
+            final1 = vmlal_s16(final1, src14 , fil7);
+            final2 = vmlal_s16(final2, src15 , fil7);
+
+            final1 = vshrq_n_s32(final1, shifts);
+            final2 = vshrq_n_s32(final2, shifts);
+
+            int16x4_t intt1 = vmovn_s32(final1);
+            int16x4_t intt2 = vmovn_s32(final2);
+
+            vst1_s16(tmp + x, intt1);
+            vst1_s16(tmp + x + 4, intt2);
+
+        #else
+            int16x8_t final = vdupq_n_s16(0);
+            uint8_t *ptr;
+            ptr = src + x;
+            int16x8_t src0 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(ptr - 3)));
+            int16x8_t src1 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(ptr - 2)));
+            int16x8_t src2 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(ptr - 1)));
+            int16x8_t src3 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(ptr)));
+            int16x8_t src4 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(ptr + 1)));
+            int16x8_t src5 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(ptr + 2)));
+            int16x8_t src6 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(ptr + 3)));
+            int16x8_t src7 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(ptr + 4)));
+
+            final = vmlaq_s16(final, src0, fil0);
+            final = vmlaq_s16(final, src1, fil1);
+            final = vmlaq_s16(final, src2, fil2);
+            final = vmlaq_s16(final, src3, fil3);
+            final = vmlaq_s16(final, src4, fil4);
+            final = vmlaq_s16(final, src5, fil5);
+            final = vmlaq_s16(final, src6, fil6);
+            final = vmlaq_s16(final, src7, fil7);
+            final = vshrq_n_s16(final, shifts);
+            vst1q_s16(tmp + x, final);
+    #endif
+        }
+        src += srcstride;
+        tmp += MAX_PB_SIZE;
+    }
+#endif
+
+#ifdef QPEL_UNI_SCALAR2
+    tmp = tmp_array + QPEL_EXTRA_BEFORE * MAX_PB_SIZE;
+    filter = uhd_hevc_qpel_filters[my - 1];
+
+    for (y = 0; y < height; y++)
+    {
+        for (x = 0; x < width; x++)
+        {
+            dst[x] = uhd_clip_pixel(((QPEL_FILTER(tmp, MAX_PB_SIZE) >> 6) + offset) >> shift);
+           // printf("\n%d",dst[x]);
+        }
+        tmp += MAX_PB_SIZE;
+        dst += dststride;
+    }
+    //exit(0);
+#endif
+
+#ifdef QPEL_UNI_VECTOR2
+    int16_t *str;
+    tmp = tmp_array + 192;
+    filter = qpel_filter_size8[my - 1];
+
+    int16x8_t offvector = vdupq_n_s16(offset);
+    // int32x4_t max = vdupq_n_s32((1 << BIT_DEPTH) - 1);
+    // int32x4_t min = vdupq_n_s32(0);
+
+    int16x8_t max = vdupq_n_s16((1 << BIT_DEPTH) - 1);
+    int16x8_t min = vdupq_n_s16(0);
+
+    int16x4_t filt0 = vdup_n_s16(filter[0]);
+    int16x4_t filt1 = vdup_n_s16(filter[1]);
+    int16x4_t filt2 = vdup_n_s16(filter[2]);
+    int16x4_t filt3 = vdup_n_s16(filter[3]);
+    int16x4_t filt4 = vdup_n_s16(filter[4]);
+    int16x4_t filt5 = vdup_n_s16(filter[5]);
+    int16x4_t filt6 = vdup_n_s16(filter[6]);
+    int16x4_t filt7 = vdup_n_s16(filter[7]);
+
+    for (y = 0; y < height; y++)
+    {
+        for (x = 0; x < width; x += 8)
+        {
+            str = tmp + x;
+            int32x4_t final1 = vdupq_n_s32(0);
+            int32x4_t final2 = vdupq_n_s32(0);
+
+            int16x4_t src0 = vld1_s16(str - 192);
+            int16x4_t src1 = vld1_s16(str - 188);
+
+            int16x4_t src2 = vld1_s16(str - 128);
+            int16x4_t src3 = vld1_s16(str - 124);
+
+            int16x4_t src4 = vld1_s16(str - 64);
+            int16x4_t src5 = vld1_s16(str - 60);
+
+            int16x4_t src6 = vld1_s16(str);
+            int16x4_t src7 = vld1_s16(str + 4);
+
+            int16x4_t src8 = vld1_s16(str + 64);
+            int16x4_t src9 = vld1_s16(str + 68);
+
+            int16x4_t src10 = vld1_s16(str + 128);
+            int16x4_t src11 = vld1_s16(str + 132);
+
+            int16x4_t src12 = vld1_s16(str + 192);
+            int16x4_t src13 = vld1_s16(str + 196);
+
+            int16x4_t src14 = vld1_s16(str + 256);
+            int16x4_t src15 = vld1_s16(str + 260);
+
+            final1 = vmlal_s16(final1, src0, filt0);
+            final2 = vmlal_s16(final2, src1, filt0);
+
+            final1 = vmlal_s16(final1, src2, filt1);
+            final2 = vmlal_s16(final2, src3, filt1);
+
+            final1 = vmlal_s16(final1, src4, filt2);
+            final2 = vmlal_s16(final2, src5, filt2);
+
+            final1 = vmlal_s16(final1, src6, filt3);
+            final2 = vmlal_s16(final2, src7, filt3);
+
+            final1 = vmlal_s16(final1, src8, filt4);
+            final2 = vmlal_s16(final2, src9, filt4);
+
+            final1 = vmlal_s16(final1, src10, filt5);
+            final2 = vmlal_s16(final2, src11, filt5);
+
+            final1 = vmlal_s16(final1, src12, filt6);
+            final2 = vmlal_s16(final2, src13, filt6);
+
+            final1 = vmlal_s16(final1, src14, filt7);
+            final2 = vmlal_s16(final2, src15, filt7);
+
+            int16x4_t f_sum0 = vshrn_n_s32(final1, 6);
+            int16x4_t f_sum1 = vshrn_n_s32(final2, 6);
+
+            int16x8_t combined = vcombine_s16(f_sum0, f_sum1);
+
+            // int16x8_t srcvector = vld1q_s16(src2 + x);
+
+            int16x8_t result = vaddq_s16(combined, offvector);
+            result = vshrq_n_s16(result,shift);
+
+            // int32x4_t result2 = vaddl_s16(vget_low_s16(result1), vget_low_s16(srcvector));
+            // int32x4_t result3 = vaddl_s16(vget_high_s16(result1), vget_high_s16(srcvector));
+
+            // result2 = vshrq_n_s32(result2, shift);
+            // result3 = vshrq_n_s32(result3, shift);
+            uint16x8_t clip00 = vreinterpretq_u16_s16((vminq_s16(max, vmaxq_s16(min, result))));
+
+
+            // uint16x4_t clip0 = vreinterpret_u16_s16(vmovn_s32(vminq_s32(max, vmaxq_s32(min, result2))));
+            // uint16x4_t clip1 = vreinterpret_u16_s16(vmovn_s32(vminq_s32(max, vmaxq_s32(min, result3))));
+
+           // uint16x8_t opp = vcombine_u16(clip0, clip1);
+            #if BIT_DEPTH > 8
+                // for(int val=0;val<8;val++)
+                // {
+                //     printf("\n%d",clip00[val]);
+                // }
+                vst1q_u16(dst + x, clip00);
+            #else
+            uint8x8_t finale = vqmovn_u16(clip00);
+                // for(int val=0;val<8;val++)
+                // {
+                //     printf("\n%d",finale[val]);
+                // }
+            vst1_u8(dst + x, finale);
+            #endif
+        }
+        tmp += MAX_PB_SIZE;
+        dst += dststride;
+       // src2 += MAX_PB_SIZE;
+    }
+    // exit(0);
+#endif
+}
